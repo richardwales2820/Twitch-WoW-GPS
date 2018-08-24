@@ -1,0 +1,6 @@
+[submodule "labelImg"]
+	path = labelImg
+	url = https://github.com/tzutalin/labelImg.git
+[submodule "yad2k"]
+	path = yad2k
+	url = https://github.com/allanzelener/YAD2K.git
