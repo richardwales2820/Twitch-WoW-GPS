@@ -1,2 +1,4 @@
 dh/
 training/
+*.weights
+*.h5
