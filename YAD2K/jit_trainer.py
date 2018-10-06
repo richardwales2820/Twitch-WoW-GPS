@@ -20,24 +20,30 @@ from yad2k.utils.draw_boxes import draw_boxes
 
 class TrainingGenerator(object):
     # Batch size must be a multiple of number of icons
-    def __init__(self, anchors, bg_path, icons_path, batch_size):
+    def __init__(self, anchors, bg_path, icons_path, batch_size, class_names):
         self.anchors = anchors
         self.backgrounds = os.listdir(bg_path)
         self.icons = os.listdir(icons_path)
         self.batch_size = batch_size
         self.icons_path = icons_path
         self.bg_path = bg_path
+        self.class_names = class_names
 
     def training_generator(self):
         while True:
             bgs = random.sample(self.backgrounds, int(self.batch_size/len(self.icons)))
             image_batch = []
             box_batch = []
-
+            bg_widths = []
+            bg_heights = []
+            
             for bg in bgs:
-                bg_np = self.load_image(os.path.join(self.bg_path, bg))
+                bg_np = self.load_image(os.path.join(self.bg_path, bg))[:, :, :3]
                 bg_height, bg_width, _ = bg_np.shape
-
+                
+                bg_heights.append(bg_height)
+                bg_widths.append(bg_width)
+                
                 # Setup grid (the cell dimensions should be computable, easier to be given by user)
                 cell_rows = 2
                 cell_cols = 2
@@ -65,7 +71,7 @@ class TrainingGenerator(object):
                     for x in range(start_x, start_x + icon_width):
                         for y in range(start_y, start_y + icon_height):
                             bg_np[y][x] = icon_np[y-start_y][x-start_x]
-                    icon_boxes.append(np.array([icon, start_x, start_y, start_x+icon_width, start_y+icon_height], dtype=object))
+                    icon_boxes.append(np.array([self.class_names.index(icon), start_x, start_y, start_x+icon_width, start_y+icon_height]))
                 # Add BB for this image
                 box_batch.append(np.array(icon_boxes))
                 
@@ -74,24 +80,29 @@ class TrainingGenerator(object):
                 processed_image = processed_image/255.
                 
                 image_batch.append(processed_image)
-            box_batch = self.process_box(np.array(box_batch), icon_width, icon_height)
+            box_batch = self.process_box(np.array(box_batch), bg_widths, bg_heights)
             detectors_mask, matching_true_boxes = get_detector_mask(box_batch, self.anchors)
 
-            yield [np.array(image_batch), box_batch, detectors_mask, matching_true_boxes], np.zeros(len(images))
+            yield [np.array(image_batch), box_batch, detectors_mask, matching_true_boxes], np.zeros(len(image_batch))
 
-    def process_box(self, boxes, width, height):
-        orig_size = np.array([width, height])
-        orig_size = np.expand_dims(orig_size, axis=0)
+    def process_box(self, boxes, widths, heights):
+        boxes_xy = []
+        boxes_wh = []
+
+        for box,width,height in zip(boxes, widths, heights):
+            orig_size = np.array([width, height])
+            orig_size = np.expand_dims(orig_size, axis=0)
+
+            # Original boxes stored as 1D list of class, x_min, y_min, x_max, y_max.
+            
+            boxxy = 0.5 * (box[:, 3:5] + box[:, 1:3])
+            boxes_xy.append(boxxy / orig_size)
+            
+            boxwh = box[:, 3:5] - box[:, 1:3]
+            boxes_wh.append(boxwh / orig_size)
         
-        # Original boxes stored as 1D list of class, x_min, y_min, x_max, y_max.
-        
-        # Get box parameters as x_center, y_center, box_width, box_height, class.
-        boxes_xy = [0.5 * (box[:, 3:5] + box[:, 1:3]) for box in boxes]
-        boxes_wh = [box[:, 3:5] - box[:, 1:3] for box in boxes]
-        boxes_xy = [boxxy / orig_size for boxxy in boxes_xy]
-        boxes_wh = [boxwh / orig_size for boxwh in boxes_wh]
         boxes = [np.concatenate((boxes_xy[i], boxes_wh[i], box[:, 0:1]), axis=1) for i, box in enumerate(boxes)]
-
+        print(boxes)
         return np.array(boxes)
 
     def load_image(self, infilename):
@@ -148,7 +159,7 @@ def _main(args):
 
     model_body, model = create_model(anchors, class_names)
 
-    training_gen = TrainingGenerator(anchors, backgrounds_path, icons_path, batch_size)
+    training_gen = TrainingGenerator(anchors, backgrounds_path, icons_path, batch_size, class_names)
 
     train(
         model,
